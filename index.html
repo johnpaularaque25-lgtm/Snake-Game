@@ -1,0 +1,214 @@
+# snake.py - realistic 3D Snake game generator
+# Run:  python snake.py   -> creates snake.html and opens it in your browser.
+# To play on your phone: run  python -m http.server 8000  in this folder,
+# then open  http://<your-pc-ip>:8000/snake.html  on your phone (same Wi-Fi).
+
+import os
+import webbrowser
+
+HTML = r'''<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>3D Snake</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+html,body{height:100%;margin:0;background:#a9d6f2;color:#fff;font-family:system-ui,-apple-system,sans-serif;overflow:hidden;user-select:none;-webkit-user-select:none}
+#c{display:block;width:100%;height:100%;touch-action:none}
+#hud{position:fixed;top:0;left:0;right:0;padding:calc(env(safe-area-inset-top,0px) + 10px) 18px 0;font-weight:700;font-size:22px;text-shadow:0 2px 6px rgba(0,0,0,.6);pointer-events:none}
+#pad{position:fixed;bottom:0;left:50%;transform:translateX(-50%);padding-bottom:calc(env(safe-area-inset-bottom,0px) + 14px);display:grid;grid-template-columns:repeat(3,64px);gap:8px}
+#pad button{height:56px;border:0;border-radius:10px;background:#f2f2f4;color:#222;font-size:22px;box-shadow:0 4px 0 #9a9aa2,0 6px 10px rgba(0,0,0,.35);touch-action:manipulation}
+#pad button:active{transform:translateY(3px);box-shadow:0 1px 0 #9a9aa2,0 2px 4px rgba(0,0,0,.35)}
+#pad [data-d=up]{grid-column:2;grid-row:1}#pad [data-d=left]{grid-column:1;grid-row:2}#pad [data-d=down]{grid-column:2;grid-row:2}#pad [data-d=right]{grid-column:3;grid-row:2}
+#ov{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:26px;background:rgba(10,25,10,.5)}
+#ov.hide{display:none}
+#note{background:#ffe66b;color:#3a2d00;font-family:"Comic Sans MS","Chalkboard SE",cursive,sans-serif;padding:22px 30px;border-radius:6px;text-align:center;transform:rotate(-4deg);box-shadow:0 10px 30px rgba(0,0,0,.5)}
+#msg{font-size:34px;font-weight:700}
+#sub{font-size:18px;margin-top:8px}
+#go{border:0;border-radius:999px;background:#2ee66b;color:#052b12;font-size:20px;font-weight:700;padding:14px 38px}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud">Score: <span id="sc">0</span></div>
+<div id="pad"><button data-d="up">&#9650;</button><button data-d="left">&#9664;</button><button data-d="down">&#9660;</button><button data-d="right">&#9654;</button></div>
+<div id="ov"><div id="note"><div id="msg">3D SNAKE</div><div id="sub">Swipe or tap the arrows</div></div><button id="go">Play</button></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const N=15,H=N/2;
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0xa9d6f2);
+scene.fog=new THREE.Fog(0xa9d6f2,35,75);
+const cam=new THREE.PerspectiveCamera(50,1,0.1,200);
+const r=new THREE.WebGLRenderer({canvas:document.getElementById('c'),antialias:true});
+r.setPixelRatio(Math.min(devicePixelRatio,2));
+r.shadowMap.enabled=true;r.shadowMap.type=THREE.PCFSoftShadowMap;
+r.outputEncoding=THREE.sRGBEncoding;r.toneMapping=THREE.ACESFilmicToneMapping;r.toneMappingExposure=1.1;
+scene.add(new THREE.HemisphereLight(0xdff0ff,0x3a5a2a,0.8));
+const sun=new THREE.DirectionalLight(0xfff1d6,1.1);sun.position.set(-7,14,6);sun.castShadow=true;
+sun.shadow.mapSize.set(1024,1024);
+const shc=sun.shadow.camera;shc.left=shc.bottom=-11;shc.right=shc.top=11;shc.near=1;shc.far=40;sun.shadow.bias=-0.0005;
+scene.add(sun);
+function fit(){
+  const w=innerWidth,h=innerHeight;r.setSize(w,h,false);cam.aspect=w/h;
+  const k=Math.max(1,0.95/cam.aspect);cam.position.set(0,16*k,12.5*k);cam.lookAt(0,0,0);cam.updateProjectionMatrix();
+}
+addEventListener('resize',fit);fit();
+
+function tex(w,h,fn){
+  const c=document.createElement('canvas');c.width=w;c.height=h;fn(c.getContext('2d'),w,h);
+  const t=new THREE.CanvasTexture(c);t.encoding=THREE.sRGBEncoding;t.anisotropy=4;return t;
+}
+const grassTex=tex(1024,1024,(g,w,h)=>{
+  const s=w/N;
+  for(let i=0;i<N;i++)for(let j=0;j<N;j++){g.fillStyle=(i+j)%2?'#3f8a2c':'#4a9a34';g.fillRect(i*s,j*s,s,s)}
+  for(let k=0;k<25000;k++){
+    g.strokeStyle=`hsla(${90+Math.random()*30},60%,${22+Math.random()*30}%,.5)`;
+    const x=Math.random()*w,y=Math.random()*h;
+    g.beginPath();g.moveTo(x,y);g.lineTo(x+Math.random()*4-2,y-3-Math.random()*6);g.stroke();
+  }
+});
+const scaleTex=tex(256,128,(g,w,h)=>{
+  g.fillStyle='#1f3510';g.fillRect(0,0,w,h);
+  const s=16;
+  for(let y=0;y<h/s*2+1;y++)for(let x=-1;x<w/s+1;x++){
+    const cx=x*s+(y%2?s/2:0),cy=y*s/2;
+    const gr=g.createRadialGradient(cx,cy,1,cx,cy,s*0.7);
+    gr.addColorStop(0,'#8fb844');gr.addColorStop(.7,'#4d7326');gr.addColorStop(1,'#1f3510');
+    g.fillStyle=gr;g.beginPath();g.moveTo(cx,cy-s/2);g.lineTo(cx+s/2,cy);g.lineTo(cx,cy+s/2);g.lineTo(cx-s/2,cy);g.closePath();g.fill();
+  }
+});
+scaleTex.wrapS=scaleTex.wrapT=THREE.RepeatWrapping;scaleTex.repeat.set(2,2);
+const woodTex=tex(256,64,(g,w,h)=>{
+  g.fillStyle='#7a5230';g.fillRect(0,0,w,h);
+  for(let i=0;i<120;i++){
+    g.strokeStyle=`rgba(${40+Math.random()*40},25,10,.35)`;g.beginPath();
+    const y=Math.random()*h;g.moveTo(0,y);g.lineTo(w,y+Math.random()*4-2);g.stroke();
+  }
+});
+
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(N,N),new THREE.MeshStandardMaterial({map:grassTex,roughness:1}));
+ground.rotation.x=-Math.PI/2;ground.receiveShadow=true;scene.add(ground);
+const outer=new THREE.Mesh(new THREE.PlaneGeometry(120,120),new THREE.MeshStandardMaterial({color:0x2f5d22,roughness:1}));
+outer.rotation.x=-Math.PI/2;outer.position.y=-0.02;outer.receiveShadow=true;scene.add(outer);
+const wood=new THREE.MeshStandardMaterial({map:woodTex,roughness:.9});
+[[N+0.8,0.7,0.4,0,0.35,-H-0.2],[N+0.8,0.7,0.4,0,0.35,H+0.2],[0.4,0.7,N,-H-0.2,0.35,0],[0.4,0.7,N,H+0.2,0.35,0]].forEach(a=>{
+  const m=new THREE.Mesh(new THREE.BoxGeometry(a[0],a[1],a[2]),wood);
+  m.position.set(a[3],a[4],a[5]);m.castShadow=m.receiveShadow=true;scene.add(m);
+});
+
+const bodyMat=new THREE.MeshStandardMaterial({map:scaleTex,bumpMap:scaleTex,bumpScale:1.2,roughness:.4,metalness:.15});
+const sph=new THREE.SphereGeometry(1,16,12);
+const bodies=[];
+const head=new THREE.Group();
+const hm=new THREE.Mesh(sph,bodyMat);hm.scale.set(0.42,0.32,0.55);hm.position.y=0.34;hm.castShadow=true;head.add(hm);
+const eyeM=new THREE.MeshStandardMaterial({color:0xe8c020,roughness:.3}),pupM=new THREE.MeshBasicMaterial({color:0x000000});
+[-1,1].forEach(s=>{
+  const e=new THREE.Mesh(new THREE.SphereGeometry(0.09,12,10),eyeM);e.position.set(s*0.22,0.46,0.3);head.add(e);
+  const p=new THREE.Mesh(new THREE.SphereGeometry(0.045,8,8),pupM);p.position.set(s*0.27,0.47,0.36);head.add(p);
+});
+const tongue=new THREE.Group();tongue.position.set(0,0.27,0.52);
+const tm=new THREE.MeshBasicMaterial({color:0xcc2233});
+[-1,1].forEach(s=>{const b=new THREE.Mesh(new THREE.BoxGeometry(0.03,0.02,0.28),tm);b.position.set(s*0.05,0,0.14);b.rotation.y=-s*0.3;tongue.add(b)});
+head.add(tongue);scene.add(head);
+
+const apple=new THREE.Group();
+const ab=new THREE.Mesh(new THREE.SphereGeometry(0.38,24,18),new THREE.MeshPhongMaterial({color:0xd01a1a,shininess:80,specular:0x777777}));
+ab.scale.set(1,0.92,1);ab.castShadow=true;apple.add(ab);
+const stem=new THREE.Mesh(new THREE.CylinderGeometry(0.025,0.03,0.2,6),new THREE.MeshStandardMaterial({color:0x4a2f17}));
+stem.position.y=0.4;apple.add(stem);
+const leaf=new THREE.Mesh(new THREE.SphereGeometry(1,10,8),new THREE.MeshStandardMaterial({color:0x2f9b2f}));
+leaf.scale.set(0.13,0.02,0.07);leaf.position.set(0.1,0.46,0);leaf.rotation.z=0.3;apple.add(leaf);
+scene.add(apple);
+
+let snake,from,dir,queue,food,score,speed,alive=false,dead=false,last=0,hang=0,pulse=0,born=0;
+const W=v=>v-H+0.5;
+const rad=i=>0.4-0.22*Math.min(1,i/Math.max(snake.length,10));
+function placeFood(){
+  do{food={x:Math.floor(Math.random()*N),y:Math.floor(Math.random()*N)}}
+  while(snake.some(s=>s.x===food.x&&s.y===food.y));
+  apple.position.x=W(food.x);apple.position.z=W(food.y);born=performance.now();
+}
+function place(m,x,z,rd){m.visible=true;m.position.set(x,rd,z);m.scale.setScalar(rd)}
+function drawSnake(t){
+  const L=snake.length,a=alive?Math.min(1,(t-last)/speed):1;
+  const P=snake.map((s,i)=>{const f=from[i]||s;return{x:W(f.x+(s.x-f.x)*a),z:W(f.y+(s.y-f.y)*a)}});
+  while(bodies.length<2*(L-1)){const m=new THREE.Mesh(sph,bodyMat);m.castShadow=true;scene.add(m);bodies.push(m)}
+  let k=0;
+  for(let j=0;j<L-1;j++){
+    place(bodies[k++],(P[j].x+P[j+1].x)/2,(P[j].z+P[j+1].z)/2,(rad(j)+rad(j+1))/2);
+    place(bodies[k++],P[j+1].x,P[j+1].z,rad(j+1));
+  }
+  for(;k<bodies.length;k++)bodies[k].visible=false;
+  head.position.set(P[0].x,0,P[0].z);
+  let d=Math.atan2(dir.x,dir.y)-hang;d=Math.atan2(Math.sin(d),Math.cos(d));hang+=d*0.25;head.rotation.y=hang;
+  pulse=Math.max(0,pulse-0.03);head.scale.setScalar(1+pulse*0.4);
+  tongue.visible=alive&&(t%900)<180;
+}
+function reset(){
+  snake=[{x:7,y:7},{x:6,y:7},{x:5,y:7}];from=snake.slice();dir={x:1,y:0};queue=[];score=0;speed=150;dead=false;
+  bodyMat.color.setHex(0xffffff);hang=Math.atan2(1,0);
+  placeFood();document.getElementById('sc').textContent=0;
+}
+function step(){
+  if(queue.length)dir=queue.shift();
+  const h={x:snake[0].x+dir.x,y:snake[0].y+dir.y};
+  if(h.x<0||h.y<0||h.x>=N||h.y>=N||snake.some(s=>s.x===h.x&&s.y===h.y)){die();return}
+  from=[snake[0]].concat(snake);
+  snake.unshift(h);
+  if(h.x===food.x&&h.y===food.y){score++;pulse=1;speed=Math.max(70,speed-4);placeFood();document.getElementById('sc').textContent=score}
+  else snake.pop();
+}
+function die(){
+  alive=false;dead=true;bodyMat.color.setHex(0x8a8a8a);
+  document.getElementById('msg').textContent='your so bobo';
+  document.getElementById('sub').textContent='Score: '+score;
+  document.getElementById('go').textContent='Try again';
+  document.getElementById('ov').classList.remove('hide');
+}
+function turn(d){
+  if(!alive)return;
+  const l=queue.length?queue[queue.length-1]:dir;
+  if((d.x===-l.x&&d.y===-l.y)||(d.x===l.x&&d.y===l.y))return;
+  if(queue.length<2)queue.push(d);
+}
+const D={up:{x:0,y:-1},down:{x:0,y:1},left:{x:-1,y:0},right:{x:1,y:0}};
+document.querySelectorAll('#pad button').forEach(b=>b.addEventListener('pointerdown',e=>{e.preventDefault();turn(D[b.dataset.d])}));
+addEventListener('keydown',e=>{
+  const k={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',w:'up',s:'down',a:'left',d:'right'}[e.key];
+  if(k){e.preventDefault();turn(D[k])}
+});
+let tx=0,ty=0;
+const cv=document.getElementById('c');
+cv.addEventListener('touchstart',e=>{tx=e.touches[0].clientX;ty=e.touches[0].clientY},{passive:true});
+cv.addEventListener('touchend',e=>{
+  const t=e.changedTouches[0],dx=t.clientX-tx,dy=t.clientY-ty;
+  if(Math.max(Math.abs(dx),Math.abs(dy))<20)return;
+  turn(Math.abs(dx)>Math.abs(dy)?(dx>0?D.right:D.left):(dy>0?D.down:D.up));
+},{passive:true});
+document.getElementById('go').addEventListener('click',()=>{
+  reset();document.getElementById('ov').classList.add('hide');alive=true;last=performance.now();
+});
+
+reset();
+function loop(t){
+  requestAnimationFrame(loop);
+  if(alive&&t-last>=speed){last=t;step()}
+  drawSnake(t);
+  apple.rotation.y=t/900;apple.position.y=0.36+Math.sin(t/300)*0.04;
+  apple.scale.setScalar(Math.min(1,(t-born)/250));
+  r.render(scene,cam);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
+'''
+
+here = os.path.dirname(os.path.abspath(__file__))
+path = os.path.join(here, "snake.html")
+with open(path, "w", encoding="utf-8") as f:
+    f.write(HTML)
+print("Created:", path)
+webbrowser.open("file://" + path)
